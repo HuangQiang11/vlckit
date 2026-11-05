@@ -1,0 +1,20 @@
+VLC revision: 005e69e67a8730f128e44bde68437fbb048cf45f
+VLCKit revision: 6b87735a95fd3aa96f0fdb6d1b465a2d92badd8f
+Patch SHA-256: 7714b76e91e3334b21f52498aedf6060c13899817afd2898373757d681aec081
+Date: 2026-11-05
+Assertions: enabled (native debug configuration, no -DNDEBUG)
+Testing FakeEsOut
+Testing Inheritables
+Testing SegmentBase
+Testing SegmentList
+Testing SegmentTemplate
+Testing Timeline
+Testing Conversions
+Testing TemplatedUri
+Testing BufferingLogic
+Testing CommandsQueue
+Testing M3U8MasterPlaylist
+Testing M3U8Playlist
+Testing SegmentTracker
+Exit status: 0
+Includes HLS gap-duration inheritance and missing/overflowing timing regression cases.

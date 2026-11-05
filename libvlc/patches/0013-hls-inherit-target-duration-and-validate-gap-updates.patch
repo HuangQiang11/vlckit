@@ -1,0 +1,151 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: qiang huang <>
+Subject: [PATCH] hls: inherit target duration and reject unsafe segment updates
+
+HLS relative segment lists need TARGETDURATION to estimate missing segments.
+Validate timing before transferring segment ownership; reject missing or
+overflowing timing instead of aborting. Include adaptive regression tests.
+
+diff --git a/modules/demux/adaptive/playlist/SegmentList.cpp b/modules/demux/adaptive/playlist/SegmentList.cpp
+index af3cf75..1ca04a8 100644
+--- a/modules/demux/adaptive/playlist/SegmentList.cpp
++++ b/modules/demux/adaptive/playlist/SegmentList.cpp
+@@ -121,6 +121,25 @@ void SegmentList::updateWith(AbstractMultipleSegmentBaseType *updated_,
+         if(updated->segments.empty())
+             return;
+ 
++        // 在转移任何分片所有权前预检整次更新。无有效默认时长或时间线溢出时保留旧窗口，
++        // 由正常刷新／播放超时路径处理；不能因外部列表数据 abort，也不能部分合并后返回导致重复释放。
++        const Segment *previous = prevSegment;
++        stime_t start = previous->startTime;
++        for(const Segment *seg : updated->segments)
++        {
++            if(__builtin_add_overflow(start, previous->duration, &start))
++                return;
++            if(seg->getSequenceNumber() != previous->getSequenceNumber() + 1)
++            {
++                const uint64_t gap = seg->getSequenceNumber() - previous->getSequenceNumber() - 1;
++                stime_t offset;
++                if(duration <= 0 || __builtin_mul_overflow(duration, gap, &offset) ||
++                   __builtin_add_overflow(start, offset, &start))
++                    return;
++            }
++            previous = seg;
++        }
++
+         /* merge update with current list */
+         for(auto it = updated->segments.begin(); it != updated->segments.end(); ++it)
+         {
+@@ -130,9 +149,8 @@ void SegmentList::updateWith(AbstractMultipleSegmentBaseType *updated_,
+             if(cur->getSequenceNumber() != prevSegment->getSequenceNumber() + 1)
+             {
+                 assert(prevSegment->getSequenceNumber() < cur->getSequenceNumber());
+-                assert(duration);
+                 uint64_t gap = cur->getSequenceNumber() - prevSegment->getSequenceNumber() - 1;
+-                cur->startTime = cur->startTime + duration * gap;
++                cur->startTime = cur->startTime + duration * static_cast<stime_t>(gap);
+             }
+             prevSegment = cur;
+             addSegment(cur);
+diff --git a/modules/demux/adaptive/test/playlist/M3U8.cpp b/modules/demux/adaptive/test/playlist/M3U8.cpp
+index 7b998f6..111f22e 100644
+--- a/modules/demux/adaptive/test/playlist/M3U8.cpp
++++ b/modules/demux/adaptive/test/playlist/M3U8.cpp
+@@ -40,6 +40,7 @@
+ 
+ #include <limits>
+ #include <algorithm>
++#include <memory>
+ 
+ using namespace adaptive;
+ using namespace adaptive::playlist;
+@@ -271,6 +272,32 @@ int M3U8Playlist_test()
+     vlc_object_t *obj = static_cast<vlc_object_t*>(nullptr);
+     DefaultBufferingLogic bufferingLogic;
+ 
++    // 回归：实际 HLS 解析结果必须向相对分片列表提供 TARGETDURATION，EXTINF 小数时长仍独立保留。
++    {
++        const char manifest[] =
++        "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:10\n"
++        "#EXTINF:2.5,\nfirst.ts\n#EXTINF:3.5,\nsecond.ts\n";
++        std::unique_ptr<M3U8> playlist(ParseM3U8(obj, manifest, sizeof(manifest)));
++        try
++        {
++            Expect(playlist);
++            auto rep = playlist->getFirstPeriod()->getAdaptationSets().front()->getRepresentations().front();
++            const Timescale scale = rep->inheritTimescale();
++            Expect(rep->inheritDuration() == scale.ToScaled(vlc_tick_from_sec(4)));
++            Expect(rep->getMediaSegment(10)->duration == scale.ToScaled(VLC_TICK_FROM_MS(2500)));
++            auto update = new SegmentList(rep, true);
++            auto segment = new Segment(rep);
++            segment->setSequenceNumber(100);
++            segment->duration = scale.ToScaled(VLC_TICK_FROM_MS(1250));
++            update->addSegment(segment);
++            rep->updateSegmentList(update, true);
++            Expect(rep->getProfile()->getStartSegmentNumber() == 100);
++            Expect(rep->getMediaSegment(100)->startTime == scale.ToScaled(vlc_tick_from_sec(358)));
++            Expect(rep->getMediaSegment(100)->duration == scale.ToScaled(VLC_TICK_FROM_MS(1250)));
++        }
++        catch(...) { return 1; }
++    }
++
+     /* Manifest 0 */
+     const char manifest0[] =
+     "#EXTM3U\n"
+diff --git a/modules/demux/adaptive/test/playlist/SegmentList.cpp b/modules/demux/adaptive/test/playlist/SegmentList.cpp
+index e9f8599..dbc4122 100644
+--- a/modules/demux/adaptive/test/playlist/SegmentList.cpp
++++ b/modules/demux/adaptive/test/playlist/SegmentList.cpp
+@@ -37,6 +37,36 @@ using namespace adaptive::playlist;
+ 
+ int SegmentList_test() try
+ {
++    // 外部列表缺少默认时长或提供极端序号时，必须整次拒绝，不能 abort／部分转移所有权。
++    for(int test = 0; test < 4; ++test)
++    {
++        auto current = std::make_unique<SegmentList>(nullptr, true);
++        auto old = std::make_unique<Segment>(nullptr);
++        old->setSequenceNumber(10);
++        old->duration = 100;
++        old->startTime = test == 3 ? std::numeric_limits<stime_t>::max() - 50 : 0;
++        current->addSegment(old.release());
++        if(test >= 2)
++            current->addAttribute(new DurationAttr(100));
++        auto update = std::make_unique<SegmentList>(nullptr, true);
++        auto first = std::make_unique<Segment>(nullptr);
++        first->setSequenceNumber(test == 0 ? 100 : test == 2 ? std::numeric_limits<uint64_t>::max() - 1 : 11);
++        first->duration = 100;
++        update->addSegment(first.release());
++        if(test == 1)
++        {
++            auto second = std::make_unique<Segment>(nullptr);
++            second->setSequenceNumber(13);
++            second->duration = 100;
++            update->addSegment(second.release());
++        }
++        current->updateWith(update.get());
++        Expect(current->getSegments().size() == 1);
++        Expect(current->getStartSegmentNumber() == 10);
++        Expect(update->getSegments().size() == (test == 1 ? 2 : 1));
++        Expect(update->getSegments().front()->startTime == 0);
++    }
++
+     std::unique_ptr<SegmentList> segmentList;
+     std::unique_ptr<SegmentList> segmentList2;
+     segmentList = std::make_unique<SegmentList>(nullptr);
+diff --git a/modules/demux/hls/playlist/Parser.cpp b/modules/demux/hls/playlist/Parser.cpp
+index 312b41e..e6c9b72 100644
+--- a/modules/demux/hls/playlist/Parser.cpp
++++ b/modules/demux/hls/playlist/Parser.cpp
+@@ -380,6 +380,11 @@ void M3U8Parser::parseSegments(vlc_object_t *, HLSRepresentation *rep, const std
+ 
+             case SingleValueTag::EXTXTARGETDURATION:
+                 rep->targetDuration = static_cast<const SingleValueTag *>(tag)->getValue().decimal();
++                // HLS 的相对时间列表在窗口跳号时需要默认时长；只保存 targetDuration 字段无法被列表继承。
++                if(timescale.isValid() && rep->targetDuration > 0 &&
++                   static_cast<uint64_t>(rep->targetDuration) <=
++                       static_cast<uint64_t>(std::numeric_limits<stime_t>::max()) / timescale)
++                    rep->replaceAttribute(new DurationAttr(rep->targetDuration * static_cast<uint64_t>(timescale)));
+                 break;
+ 
+             case SingleValueTag::EXTXPLAYLISTTYPE:

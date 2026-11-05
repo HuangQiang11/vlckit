@@ -4,11 +4,7 @@ import PackageDescription
 let package = Package(
     name: "VLCKit",
     platforms: [
-        .iOS(.v12),
-        .macOS(.v10_13),
-        .tvOS(.v12),
-        .watchOS("7.4"),
-        .visionOS(.v1)
+        .iOS(.v17)
     ],
     products: [
         .library(name: "VLCKit", targets: ["VLCKit"])
@@ -16,8 +12,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "VLCKit",
-            url: "https://download.videolan.org/cocoapods/unstable/VLCKit-4.0-20260929-1631.zip",
-            checksum: "f37c8dbdd4427d1a3f5d75dc4b8bd1ae863cef4426f9a405a2fd1c5c9012f1fb"
+            url: "https://github.com/HuangQiang11/vlckit/releases/download/4.0.0-vido.1/VLCKit-iOS-arm64.zip",
+            checksum: "13ab9ca0a8e546e6bbb2f35b39cb581f1c5dcbd9bd276f9c6c94192f6b3f0d1d"
         )
     ]
 )

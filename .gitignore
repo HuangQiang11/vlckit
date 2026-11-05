@@ -17,6 +17,7 @@ project.xcworkspace
 build
 /vlc-unstable
 DerivedData
+.build/
 MobileVLCKit/ImportedSources
 /libvlc/vlc
 Tests/Assets

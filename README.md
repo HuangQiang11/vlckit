@@ -4,6 +4,10 @@
 
 **VLCKit** is a generic multimedia library for any audio or video playback needs on macOS, iOS and tvOS.
 
+## HiTV 修复版本
+
+本 fork 的 `4.0.0-vido.1` 基于 VLCKit 4 开发版，修复 HLS 播放列表滑动跳号时因默认分片时长未继承而触发的 `assert(duration)` 崩溃。Swift Package 使用本仓库 Release 的修复二进制，范围为 iOS 17+、真机 arm64 与 Apple Silicon 模拟器 arm64。源码补丁、独立构建入口和验证边界见 [HLSGapFix](Documentation/HLSGapFix.md)，实测记录见 [播放回归](Documentation/HLSGapFix/playback-regression.md)。
+
 |              | Platform                                                     | Cocoapods                                                    |
 | ------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | VLCKit       | ![Platform](https://img.shields.io/cocoapods/p/VLCKit.svg?style=flat) | [![VLCKit is CocoaPods Compatible](https://img.shields.io/cocoapods/v/VLCKit.svg)](https://cocoapods.org/pods/VLCKit) |
